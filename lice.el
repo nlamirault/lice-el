@@ -32,32 +32,25 @@
 ;; Usage
 ;; -----
 
-;; Usage is very easy, put `lice.el` in your emacs system, and open a new
+;; Usage is very easy, put `lice.el` in your Emacs system, and open a new
 ;; file, and run:
 
 ;;     M-x lice
 
-;; Then, `lice.el` tell to use which license (default is gpl-3.0). You
+;; Then, `lice.el` tell to use which license (default is gpl-3.0).  You
 ;; can select license on minibuffer completion.
 
 ;; When you select license, and enter the `RET`, license and copyright is
 ;; putted into a text.
 
-;; Use dir-locals
-;; --------------
+;; More Information
+;; ----------------
 
-;; You can use `.dir-locals.el` for your project. Put `.dir-locals.el` in
-;; your project root directory and write follows:
-
-;;     ((nil
-;;       (lice:default-license . "mit")))
-
-;; That means use `mit' for default license template.
+;; See the `README.md` file for more information.
 
 ;;; Code:
 
-(eval-when-compile
-  (require 'cl))
+(require 'cl-lib)
 (require 'newcomment)
 
 (defconst lice:version "0.2")
@@ -74,11 +67,12 @@
 (defgroup lice nil
   "License And Header Template"
   :prefix "lice:"
+  :group 'tools
   :link '(url-link "https://github.com/buzztaiki/lice-el"))
 
 (define-widget 'lice:comment-style 'choice
   "The comment style selection widget."
-  :args `(,@(loop for x in comment-styles
+  :args `(,@(cl-loop for x in comment-styles
                   collect `(const
                             :tag ,(replace-regexp-in-string
                                    "-" " " (capitalize (symbol-name (car x))))
@@ -87,18 +81,23 @@
 
 (defcustom lice:license-directories
   (list lice:system-template-directory lice:custom-template-directory)
-  "The location of License template directories"
+  "The location of License template directories."
   :group 'lice
   :type '(repeat directory))
 
 (defcustom lice:comment-style 'extra-line
   "The comment style for license insertion.
 When nil, `comment-style' value is used."
-  :group 'lice
-  :type 'lice:comment-style)
+  :group 'lice  :type 'lice:comment-style)
 
 (defcustom lice:default-license "gpl-3.0"
-  "The default license name"
+  "The default license name."
+  :group 'lice
+  :safe 'stringp
+  :type 'string)
+
+(defcustom lice:copyright-holder (user-full-name)
+  "The copyright holder."
   :group 'lice
   :safe 'stringp
   :type 'string)
@@ -114,7 +113,7 @@ should insert header string fragment."
 
 (defcustom lice:mode-comments
   (append
-   (loop for mode in '(c-mode c++-mode java-mode groovy-mode)
+   (cl-loop for mode in '(c-mode c++-mode java-mode groovy-mode)
          collect (list mode
                        :comment-start "/*"
                        :comment-end "*/"))
@@ -122,13 +121,12 @@ should insert header string fragment."
   "The definition of mode specific comments.
 Each elements are follows:
   \(MODE . PROPERTIES))
-Mode is a major-mode which is applied PROPERTIES.
+Mode is a `major-mode' which is applied PROPERTIES.
 PROPERTIES is a plist whitch has following properties:
   :comment-start - `comment-start' of this MODE.
   :comment-end   - `comment-end' of this MODE.
   :comment-style - `comment-style' of this MODE.
-  :comment-continue - `comment-continue' of this MODE.
-"
+  :comment-continue - `comment-continue' of this MODE."
   :group 'lice
   :type '(repeat (cons :format "%v" :indent 9
                        (function :tag "Mode" :size 20)
@@ -142,7 +140,7 @@ PROPERTIES is a plist whitch has following properties:
   "Return a license list.
 Each element are follows:
 \(SIMPLE-NAME . FILE)"
-  (loop for dir in lice:license-directories
+  (cl-loop for dir in lice:license-directories
         with licenses
         if (and dir (file-directory-p dir))
         append (lice:directory-licenses dir) into licenses
@@ -150,7 +148,7 @@ Each element are follows:
                              (lambda (a b) (string< (car a) (car b))))))
 
 (defun lice:directory-licenses (dir)
-  (loop for file in (directory-files dir t)
+  (cl-loop for file in (directory-files dir t)
         with licenses
         for name = (file-name-nondirectory file)
         if (and (file-regular-p file) (not (assoc name licenses)))
@@ -166,18 +164,23 @@ NAME is a template name for insertion."
       (error "Unknown license name: %s" name))
     (save-restriction
       (narrow-to-region (point) (point))
-      (loop for component in lice:header-spec
+      (cl-loop for component in lice:header-spec
             do (progn (funcall component license)
                       (goto-char (point-max))))
-      (lice:comment-region (point-min) (point-max) major-mode)
+      (when (lice:comment-enabled-p major-mode)
+        (lice:comment-region (point-min) (point-max) major-mode))
       (goto-char (point-max)))))
 
 (defun lice:insert-copyright (license)
   (insert (format "Copyright (C) %s  %s\n\n"
-                  (format-time-string "%Y") (user-full-name))))
+                  (format-time-string "%Y")  lice:copyright-holder)))
 
 (defun lice:insert-license (license)
-  (insert-file-contents (cdr license)))
+  (insert-file-contents (cdr license))
+  (goto-char (point-max))
+  (skip-chars-backward "\n")
+  (delete-region (point) (point-max))
+  (insert "\n"))
 
 (defun lice:read-license ()
   (completing-read (format "License Name (%s): " lice:default-license)
@@ -202,6 +205,11 @@ NAME is a template name for insertion."
       (narrow-to-region start end)
       (comment-region (point-min) (point-max))
       (delete-trailing-whitespace (point-min) (point-max)))))
+
+(defun lice:comment-enabled-p (mode)
+  (let ((comment (lice:mode-comment mode)))
+    ;; A `comment-start' indicates that the `mode' supports it or not (see `comment-normalize-vars').
+    (or (plist-get comment :comment-start) comment-start)))
 
 (provide 'lice)
 ;;; lice.el ends here
